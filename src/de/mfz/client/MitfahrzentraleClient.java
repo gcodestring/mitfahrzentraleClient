@@ -8,18 +8,27 @@ import de.mfz.jaxb.*;
 import java.awt.Dimension;
 import java.awt.Toolkit;
 import java.math.BigInteger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.swing.DefaultListModel;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JList;
+import org.jivesoftware.smack.Connection;
+import org.jivesoftware.smack.XMPPConnection;
+import org.jivesoftware.smack.XMPPException;
+import org.jivesoftware.smackx.pubsub.*;
 /**
  * Die Klasse für den Client, regelt alle Abfragen und auch die Darstellung.
  * @author Sascha Lemke, Guido Schori, René Zwinge
  */
 public class MitfahrzentraleClient extends JFrame {
     
-    private final String serverurl = "http://81.169.176.220:4434/mitfahrzentrale";
-    private  Client client;
+    private final String serverurl = "http://localhost:4434/mitfahrzentrale";
+    private Connection xmppcon;
+    private PubSubManager pubsub;
+    private LeafNode leafs[];
+    private Client client;
     private WebResource resource;
     private Mitfahrzentrale mfz;
     private Person loggedPerson;
@@ -59,6 +68,49 @@ public class MitfahrzentraleClient extends JFrame {
         }
         
         this.setLocationRelativeTo(null);
+        
+        /*
+         * Verbindung zum XMPP Server
+         */
+        this.xmppcon = new XMPPConnection("localhost");
+        try {
+            this.xmppcon.connect();
+        } catch (XMPPException ex) {
+            System.out.println("Konnte nicht zum XMPP Server verbinden.");
+        }
+
+        try {
+            this.xmppcon.login("admin", "admin");
+        } catch( IllegalStateException | XMPPException e) {
+            System.out.println("Login fehlgeschlagen.");
+        }
+        /*
+         * Ruft alle Fahrten ab und erstellt Nodes
+         */
+        pubsub = new PubSubManager(this.xmppcon);
+        
+        ConfigureForm form = new ConfigureForm(FormType.submit);
+        form.setAccessModel(AccessModel.open);
+        form.setDeliverPayloads(true);
+        form.setNotifyRetract(true);
+        form.setPersistentItems(true);
+        form.setPublishModel(PublishModel.open);
+        
+        this.leafs = new LeafNode[this.mfz.getFahrten().size()];
+        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {            
+            try {
+                try {
+                    // testen ob node vorhanden und wenn ja, löschen!
+                    Node n = pubsub.getNode("Route" + i);
+                    pubsub.deleteNode("Route" + i);
+                } catch(XMPPException e) {
+                    // keine Node vorhanden
+                }
+                this.leafs[i] = (LeafNode) pubsub.createNode("Route" + i, form);
+            } catch (XMPPException ex) {
+                System.out.println("Konnte keine Node erstellen. Überprüfen Sie ihre Verbindung!");
+            }
+        }
     }
 
     /**
@@ -957,6 +1009,7 @@ public class MitfahrzentraleClient extends JFrame {
      */
     private void CloseButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_CloseButtonActionPerformed
         this.dispose();
+        this.xmppcon.disconnect();
     }//GEN-LAST:event_CloseButtonActionPerformed
 
     /**
@@ -1118,6 +1171,15 @@ public class MitfahrzentraleClient extends JFrame {
         this.RouteNeuAbfahrtFeld.setText("");
         this.RouteNeuSitzplaetzeFeld.setText("");
         this.RouteNeuMobiltelefonFeld.setText("");
+        
+        try {
+            LeafNode n = (LeafNode) this.pubsub.getNode("Route" + (this.mfz.getFahrten().size()-1));
+            n.send(new Item("0"));
+        } catch (XMPPException ex) {
+            Logger.getLogger(MitfahrzentraleClient.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        
+        
         this.RouteNeuDialog.dispose();
     }//GEN-LAST:event_RouteNeuSaveButtonActionPerformed
 
@@ -1143,10 +1205,64 @@ public class MitfahrzentraleClient extends JFrame {
         r.setSitze(BigInteger.valueOf(Long.valueOf(this.RouteEditSitzplaetzeFeld.getText())));
         rt.setRoute(r);
         rt.setFahrer(f.getFahrer());
-        rt.setMitfahrer(f.getMitfahrer());
        
         this.put(rt, index);
-                this.mfz = get("");
+        
+        /*
+         * Prüfen ob sich daten geändert haben 
+         */
+        boolean mobile = false;
+        boolean startpunkt = false;
+        boolean endpunkt = false;
+        boolean startzeit = false;
+        boolean sitze = false;
+        
+        if(!r.getStartpunkt().equals(f.getRoute().getStartpunkt())) startpunkt = true;
+        if(!r.getZielpunkt().equals(f.getRoute().getZielpunkt())) endpunkt = true;
+        if(!c.getMobil().equals(f.getContact().getMobil())) mobile = true;
+        if(!r.getStartzeitpunkt().equals(f.getRoute().getStartzeitpunkt())) startzeit = true;
+        if(!r.getSitze().equals(f.getRoute().getSitze())) sitze = true;
+        
+        String payload = "";
+        
+        payload += "<fahrten>";
+        if(mobile) {
+            payload += "<contact>";
+            payload += "<mobil>" + rt.getContact().getMobil() + "</mobil>";
+            payload += "</contact>";
+        }
+        
+        if(startpunkt  || endpunkt || startzeit || sitze) {
+            payload += "<route>";
+            if(startzeit) {
+                payload += "<startzeitpunkt>" + rt.getRoute().getStartzeitpunkt() + "</startzeitpunkt>";
+            }    
+            if(startpunkt) {
+                payload += "<startpunkt>" + rt.getRoute().getStartpunkt() + "</startpunkt>";
+            }
+            if(endpunkt) {
+                payload += "<zielpunkt>" + rt.getRoute().getZielpunkt() + "</zielpunkt>";
+            }
+            if(sitze) {
+                payload += "<sitze>" + rt.getRoute().getSitze() + "</sitze>";
+            }
+            payload += "</route>";
+        }
+        payload += "</fahrten>";
+        
+        try {
+            LeafNode n = (LeafNode) this.pubsub.getNode("Route" + index);
+            SimplePayload sp =  new SimplePayload("mitfahrzentrale", "mitfahrzentrale:fahrten", payload);
+            PayloadItem i = new PayloadItem("mitfahrzentrale", sp);
+            n.send(i);
+        } catch (XMPPException ex) {
+            Logger.getLogger(MitfahrzentraleClient.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        
+        /*
+         * Update der JList
+         */
+        this.mfz = get("");
         this.model = new DefaultListModel();
         this.Routenliste.setModel(this.model);
         for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
@@ -1236,7 +1352,11 @@ public class MitfahrzentraleClient extends JFrame {
             item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
             this.model.add(i, item);
         }
-        
+        try {
+            this.pubsub.deleteNode("Route" + id);
+        } catch (XMPPException ex) {
+            Logger.getLogger(MitfahrzentraleClient.class.getName()).log(Level.SEVERE, null, ex);
+        }
         this.RouteDeleteNrFeld.setText("");
         this.RouteDeleteDialog.dispose();
     }//GEN-LAST:event_RouteDeleteSaveButtonActionPerformed
@@ -1360,13 +1480,7 @@ public class MitfahrzentraleClient extends JFrame {
         try {
             javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName());
                     
-        } catch (ClassNotFoundException ex) {
-            java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (InstantiationException ex) {
-            java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (IllegalAccessException ex) {
-            java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (javax.swing.UnsupportedLookAndFeelException ex) {
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | javax.swing.UnsupportedLookAndFeelException ex) {
             java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }
         //</editor-fold>
