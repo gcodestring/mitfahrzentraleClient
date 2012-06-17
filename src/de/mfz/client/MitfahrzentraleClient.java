@@ -1,10 +1,10 @@
 package de.mfz.client;
+
 import com.sun.jersey.api.client.Client;
 import com.sun.jersey.api.client.ClientResponse;
 import com.sun.jersey.api.client.WebResource;
 import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
-
 import de.mfz.coordinator.RouteChangedCoordinator;
 import de.mfz.jaxb.*;
 import java.awt.Dimension;
@@ -70,10 +70,10 @@ public class MitfahrzentraleClient extends JFrame {
         }
         
         this.setLocationRelativeTo(null);
-        
-        /*
-         * Verbindung zum XMPP Server
-         */
+
+        /**
+         * XMPP Verbindung starten
+         */ 
         this.xmppcon = new XMPPConnection("localhost");
         try {
             this.xmppcon.connect();
@@ -81,14 +81,18 @@ public class MitfahrzentraleClient extends JFrame {
             System.out.println("Konnte nicht zum XMPP Server verbinden.");
         }
 
+        /**
+         * Am XMPP Server anmelden
+         */ 
         try {
             this.xmppcon.login("admin", "admin");
         } catch( IllegalStateException | XMPPException e) {
             System.out.println("Login fehlgeschlagen.");
         }
-        /*
-         * Ruft alle Fahrten ab und erstellt Nodes
-         */
+ 
+        /**
+         * PubSubManager erstellen
+         */ 
         this.pubsub = new PubSubManager(this.xmppcon);
         
         ConfigureForm form = new ConfigureForm(FormType.submit);
@@ -98,6 +102,9 @@ public class MitfahrzentraleClient extends JFrame {
         form.setPersistentItems(true);
         form.setPublishModel(PublishModel.open);
         
+        /**
+         * Fahrten Nodes erstellen
+         */ 
         this.leafs = new LeafNode[this.mfz.getFahrten().size()];
         for(int i = 0; i < this.mfz.getFahrten().size(); i++) {            
             try {
@@ -1495,8 +1502,7 @@ public class MitfahrzentraleClient extends JFrame {
          * http://download.oracle.com/javase/tutorial/uiswing/lookandfeel/plaf.html
          */
         try {
-            javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName());
-                    
+            javax.swing.UIManager.setLookAndFeel("javax.swing.plaf.metal.MetalLookAndFeel");        
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | javax.swing.UnsupportedLookAndFeelException ex) {
             java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }

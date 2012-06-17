@@ -7,7 +7,7 @@ public class RouteChangedCoordinator implements ItemEventListener {
 
 	@Override
 	public void handlePublishedItems(ItemPublishEvent route) {
-        System.out.println(route);
+        System.out.println(route.getNodeId());
 	}
 
 }
