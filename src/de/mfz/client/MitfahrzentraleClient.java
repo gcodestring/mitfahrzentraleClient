@@ -120,6 +120,26 @@ public class MitfahrzentraleClient extends JFrame {
                 System.out.println("Konnte keine Node erstellen. √úberpr√ºfen Sie ihre Verbindung!");
             }
         }
+        
+        /**
+         * Erstelle Subscriptions
+         * Node zu dieser geänderten Fahrt abrufen
+         * Listener für diese Node für geänderte Routen in diesem Client starten
+         * User abonniert diesen Node
+         */
+        for (int i = 0; i < this.mfz.getFahrten().size(); i++) { 
+        	try {
+        		LeafNode node = (LeafNode) this.pubsub.getNode("Route" + i);  
+        		for (int a = 0; a < this.mfz.getFahrten().get(i).getMitfahrer().getPerson().size(); a++) { 
+                    node.addItemEventListener(new RouteChangedCoordinator());
+    				node.subscribe(this.mfz.getFahrten().get(i).getMitfahrer().getPerson().get(a).getEmail());
+    			}
+        	} catch (XMPPException e) {
+				e.printStackTrace();
+			}
+        }
+        
+        this.mfz.getFahrten().get(0).getMitfahrer().getPerson().get(0);
     }
 
     /**
@@ -1076,7 +1096,6 @@ public class MitfahrzentraleClient extends JFrame {
              */
             try {
             	LeafNode node = (LeafNode) this.pubsub.getNode("Route" + --index);  
-            	System.out.println(node.getId());
                 node.addItemEventListener(new RouteChangedCoordinator());
 				node.subscribe(this.loggedPerson.getEmail());
 			} catch (XMPPException e) {
