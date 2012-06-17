@@ -1068,7 +1068,8 @@ public class MitfahrzentraleClient extends JFrame {
              * User abonniert diesen Node
              */
             try {
-            	LeafNode node = (LeafNode) this.pubsub.getNode("Route"+index);   
+            	LeafNode node = (LeafNode) this.pubsub.getNode("Route" + --index);  
+            	System.out.println(node.getId());
                 node.addItemEventListener(new RouteChangedCoordinator());
 				node.subscribe(this.loggedPerson.getEmail());
 			} catch (XMPPException e) {
