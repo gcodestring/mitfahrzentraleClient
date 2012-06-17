@@ -4,6 +4,8 @@ import com.sun.jersey.api.client.ClientResponse;
 import com.sun.jersey.api.client.WebResource;
 import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
+
+import de.mfz.coordinator.RouteChangedCoordinator;
 import de.mfz.jaxb.*;
 import java.awt.Dimension;
 import java.awt.Toolkit;
@@ -20,11 +22,11 @@ import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.pubsub.*;
 /**
  * Die Klasse f√ºr den Client, regelt alle Abfragen und auch die Darstellung.
- * @author Sascha Lemke, Guido Schori, Ren√© Zwinge
+ * @author Sascha Lemke, Guido Schori, Rene Zwinge
  */
 public class MitfahrzentraleClient extends JFrame {
     
-    private final String serverurl = "http://localhost:4434/mitfahrzentrale";
+	private final String serverurl = "http://localhost:4434/mitfahrzentrale";
     private Connection xmppcon;
     private PubSubManager pubsub;
     private LeafNode leafs[];
@@ -32,7 +34,7 @@ public class MitfahrzentraleClient extends JFrame {
     private WebResource resource;
     private Mitfahrzentrale mfz;
     private Person loggedPerson;
-    private DefaultListModel model;
+    private DefaultListModel<String> model;
     
     /**
      * Creates new form MitfahrzentraleClient
@@ -87,7 +89,7 @@ public class MitfahrzentraleClient extends JFrame {
         /*
          * Ruft alle Fahrten ab und erstellt Nodes
          */
-        pubsub = new PubSubManager(this.xmppcon);
+        this.pubsub = new PubSubManager(this.xmppcon);
         
         ConfigureForm form = new ConfigureForm(FormType.submit);
         form.setAccessModel(AccessModel.open);
@@ -101,12 +103,12 @@ public class MitfahrzentraleClient extends JFrame {
             try {
                 try {
                     // testen ob node vorhanden und wenn ja, l√∂schen!
-                    Node n = pubsub.getNode("Route" + i);
-                    pubsub.deleteNode("Route" + i);
+                    Node n = this.pubsub.getNode("Route" + i);
+                    this.pubsub.deleteNode("Route" + i);
                 } catch(XMPPException e) {
                     // keine Node vorhanden
                 }
-                this.leafs[i] = (LeafNode) pubsub.createNode("Route" + i, form);
+                this.leafs[i] = (LeafNode) this.pubsub.createNode("Route" + i, form);
             } catch (XMPPException ex) {
                 System.out.println("Konnte keine Node erstellen. √úberpr√ºfen Sie ihre Verbindung!");
             }
@@ -1048,16 +1050,30 @@ public class MitfahrzentraleClient extends JFrame {
      * Meldet den derzeitigen User f√ºr die ausgew√§hlte Fahrt an.
      * @param evt Das Event
      */
+    /* HIER ERGÄNZUNG XMPP SUBSCRIPTION */
     private void anmeldenbuttonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_anmeldenbuttonActionPerformed
         int index = Routenliste.getSelectedIndex();
         if(index != -1) {
             mfz = get("");
             Fahrten f = mfz.getFahrten().get(index);
             Mitfahrer mf = new Mitfahrer();
-            mf.getPerson().add(loggedPerson);
+            mf.getPerson().add(this.loggedPerson);
             f.setMitfahrer(mf);
             index++;
             this.put(f, index);
+            
+            /** 
+             * Node zu dieser geänderten Fahrt abrufen
+             * Listener für diese Node für geänderte Routen in diesem Client starten
+             * User abonniert diesen Node
+             */
+            try {
+            	LeafNode node = (LeafNode) this.pubsub.getNode("Route"+index);   
+                node.addItemEventListener(new RouteChangedCoordinator());
+				node.subscribe(this.loggedPerson.getEmail());
+			} catch (XMPPException e) {
+				e.printStackTrace();
+			}
             
             mfz = get("");
             index--;
