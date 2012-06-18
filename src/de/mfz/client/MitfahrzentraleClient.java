@@ -1,11 +1,5 @@
 package de.mfz.client;
 
-import com.sun.jersey.api.client.Client;
-import com.sun.jersey.api.client.ClientResponse;
-import com.sun.jersey.api.client.WebResource;
-import com.sun.jersey.api.client.config.ClientConfig;
-import com.sun.jersey.api.client.config.DefaultClientConfig;
-import de.mfz.coordinator.RouteChangedCoordinator;
 import de.mfz.jaxb.*;
 import java.awt.Dimension;
 import java.awt.Toolkit;
@@ -26,73 +20,42 @@ import org.jivesoftware.smackx.pubsub.*;
  */
 public class MitfahrzentraleClient extends JFrame {
     
-	private final String serverurl = "http://localhost:4434/mitfahrzentrale";
+    private final String serverurl = "http://localhost:4434/mitfahrzentrale";
     private Connection xmppcon;
     private PubSubManager pubsub;
     private LeafNode leafs[];
-    private Client client;
-    private WebResource resource;
     private Mitfahrzentrale mfz;
     private Person loggedPerson;
     private DefaultListModel<String> model;
+    private Operationen operationen;
+    
     
     /**
      * Creates new form MitfahrzentraleClient
      */
     public MitfahrzentraleClient() {
-        // initalisieren der components
-        initComponents();        
-        
-        
-        // Erstelltung des Clients
-        ClientConfig cc = new DefaultClientConfig();
-        client = Client.create(cc);
-        resource = client.resource(serverurl);
-        
-        // Beispielnutzer wegen login
-        this.loggedPerson = new Person();
-        this.loggedPerson.setName("Hans Peter");
-        this.loggedPerson.setHasRoute(false);
-        this.loggedPerson.setPassword("passwort");
-        this.loggedPerson.setEmail("email@email.com");
-        
-        // abrufen der daten f√ºr die Hauptseite
-        this.mfz = get("");
-        this.model = new DefaultListModel();
-        Routenliste.setModel(this.model);
-        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
-            String item = "";
-            item += (i +1) + ". ";
-            item += this.mfz.getFahrten().get(i).getRoute().getStartpunkt();
-            item += " > ";
-            item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
-            this.model.add(i, item);
-        }
-        
+        // initalisieren der components bzw konfiguration des JFrame
+        initComponents();
         this.setLocationRelativeTo(null);
-
-        /**
-         * XMPP Verbindung starten
-         */ 
-        this.xmppcon = new XMPPConnection("localhost");
+        
+        //Erstellen der Objekte f√ºr den JerseyClient
+        this.operationen = new Operationen(this.serverurl);
+        this.loggedPerson = new TestPerson();
+        
+        // Erstellen einer XMPP Verbindung
         try {
+            this.xmppcon = new XMPPConnection("localhost");
             this.xmppcon.connect();
         } catch (XMPPException ex) {
-            System.out.println("Konnte nicht zum XMPP Server verbinden.");
+            System.err.println("Konnte nicht zum XMPP Server verbinden.");
         }
-
-        /**
-         * Am XMPP Server anmelden
-         */ 
         try {
-            this.xmppcon.login("admin", "admin");
-        } catch( IllegalStateException | XMPPException e) {
-            System.out.println("Login fehlgeschlagen.");
+            xmppcon.login("admin", "admin");
+        } catch (XMPPException ex) {
+            System.err.println("Konnte nicht zum Server verbinden: Falsche Zugangsdaten!");
         }
- 
-        /**
-         * PubSubManager erstellen
-         */ 
+        
+        // Erstellen des PubsubManager 
         this.pubsub = new PubSubManager(this.xmppcon);
         
         ConfigureForm form = new ConfigureForm(FormType.submit);
@@ -102,10 +65,15 @@ public class MitfahrzentraleClient extends JFrame {
         form.setPersistentItems(true);
         form.setPublishModel(PublishModel.open);
         
+        // abrufen der daten f√ºr die Hauptseite und f√ºllen der Jlist mit den daten
+        this.mfz = operationen.get("");
+        this.refreshJList();
+
         /**
          * Fahrten Nodes erstellen
          */ 
         this.leafs = new LeafNode[this.mfz.getFahrten().size()];
+        
         for(int i = 0; i < this.mfz.getFahrten().size(); i++) {            
             try {
                 try {
@@ -113,35 +81,13 @@ public class MitfahrzentraleClient extends JFrame {
                     Node n = this.pubsub.getNode("Route" + i);
                     this.pubsub.deleteNode("Route" + i);
                 } catch(XMPPException e) {
-                    // keine Node vorhanden
+                    
                 }
                 this.leafs[i] = (LeafNode) this.pubsub.createNode("Route" + i, form);
             } catch (XMPPException ex) {
                 System.out.println("Konnte keine Node erstellen. √úberpr√ºfen Sie ihre Verbindung!");
             }
         }
-        
-        /**
-         * Erstelle Subscriptions
-         * Node zu dieser geänderten Fahrt abrufen
-         * Listener für diese Node für geänderte Routen in diesem Client starten
-         * User abonniert diesen Node
-         */
-        for (int i = 0; i < this.mfz.getFahrten().size(); i++) { 
-        	try {
-        		LeafNode node = (LeafNode) this.pubsub.getNode("Route" + i);  
-        		for (int a = 0; a < this.mfz.getFahrten().get(i).getMitfahrer().getPerson().size(); a++) { 
-        			if (this.loggedPerson.getEmail()==this.mfz.getFahrten().get(i).getMitfahrer().getPerson().get(a).getEmail()) {
-        				node.addItemEventListener(new RouteChangedCoordinator());
-        				node.subscribe(this.mfz.getFahrten().get(i).getMitfahrer().getPerson().get(a).getEmail());
-        			}
-    			}
-        	} catch (XMPPException e) {
-				e.printStackTrace();
-			}
-        }
-        
-        this.mfz.getFahrten().get(0).getMitfahrer().getPerson().get(0);
     }
 
     /**
@@ -1079,45 +1025,21 @@ public class MitfahrzentraleClient extends JFrame {
      * Meldet den derzeitigen User f√ºr die ausgew√§hlte Fahrt an.
      * @param evt Das Event
      */
-    /* HIER ERGÄNZUNG XMPP SUBSCRIPTION */
     private void anmeldenbuttonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_anmeldenbuttonActionPerformed
         int index = Routenliste.getSelectedIndex();
         if(index != -1) {
-            mfz = get("");
+            mfz = operationen.get("");
             Fahrten f = mfz.getFahrten().get(index);
             Mitfahrer mf = new Mitfahrer();
             mf.getPerson().add(this.loggedPerson);
             f.setMitfahrer(mf);
-            index++;
-            this.put(f, index);
+            operationen.put(f, ++index);
             
-            /** 
-             * Node zu dieser geänderten Fahrt abrufen
-             * Listener für diese Node für geänderte Routen in diesem Client starten
-             * User abonniert diesen Node
-             */
-            try {
-            	LeafNode node = (LeafNode) this.pubsub.getNode("Route" + --index);  
-                node.addItemEventListener(new RouteChangedCoordinator());
-				node.subscribe(this.loggedPerson.getEmail());
-			} catch (XMPPException e) {
-				e.printStackTrace();
-			}
-            
-            mfz = get("");
+            mfz = operationen.get("");
             index--;
             f = mfz.getFahrten().get(index);
-            DefaultListModel m = new DefaultListModel();
-            this.mitfahrerlist.setModel(m);
-            this.mitfahrerlist.setModel(m);
-            if(f.getMitfahrer() != null) {
-                for(int i = 0; i < f.getMitfahrer().getPerson().size(); i++) {
-                    String output = "";
-                    output += i + ". ";
-                    output += f.getMitfahrer().getPerson().get(i).getName();
-                    m.add(i, output);
-                }
-            }
+            
+            refreshMitfahrerList(f);
         }
     }//GEN-LAST:event_anmeldenbuttonActionPerformed
 
@@ -1145,6 +1067,32 @@ public class MitfahrzentraleClient extends JFrame {
         dialog.setVisible(true);
     }
     
+    public void refreshJList() {
+        this.model = new DefaultListModel();
+        this.Routenliste.setModel(this.model);
+        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
+            String item = "";
+            item += (i +1) + ". ";
+            item += this.mfz.getFahrten().get(i).getRoute().getStartpunkt();
+            item += " > ";
+            item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
+            this.model.add(i, item);
+        }
+    }
+    
+    public void refreshMitfahrerList(Fahrten f) {
+            DefaultListModel m = new DefaultListModel();
+            this.mitfahrerlist.setModel(m);
+            if(f.getMitfahrer() != null) {
+                for(int i = 0; i < f.getMitfahrer().getPerson().size(); i++) {
+                    String output = "";
+                    output += (i +1) + ". ";
+                    output += f.getMitfahrer().getPerson().get(i).getName();
+                    m.add(i, output);
+                }
+            }
+    }
+    
     /**
      * F√ºhlt die Informationen mit Inhalt, sobald eine Fahrt selektiert wurde.
      * @param evt Das Event
@@ -1155,23 +1103,15 @@ public class MitfahrzentraleClient extends JFrame {
         int index = list.getSelectedIndex();
         if(index != -1) {
         
-            this.mfz = get("");
+            this.mfz = operationen.get("");
             Fahrten f = this.mfz.getFahrten().get(index);
             startortfeld.setText(f.getRoute().getStartpunkt());
             zielortfeld.setText(f.getRoute().getZielpunkt());
             abfahrtstdfeld.setText(f.getRoute().getStartzeitpunkt());
             sitzplaetzefeld.setText(String.valueOf(f.getRoute().getSitze()));
             fahrerfeld.setText(f.getFahrer().getPerson().getName());
-            DefaultListModel m = new DefaultListModel();
-            this.mitfahrerlist.setModel(m);
-            if(f.getMitfahrer() != null) {
-                for(int i = 0; i < f.getMitfahrer().getPerson().size(); i++) {
-                    String output = "";
-                    output += i + ". ";
-                    output += f.getMitfahrer().getPerson().get(i).getName();
-                    m.add(i, output);
-                }
-            }
+            
+            refreshMitfahrerList(f);
         }
     }//GEN-LAST:event_RoutenlisteValueChanged
 
@@ -1198,19 +1138,12 @@ public class MitfahrzentraleClient extends JFrame {
         f.setRoute(r);
         f.setContact(c);
         
-        this.post(f);
+        this.operationen.post(f);
         
-        this.mfz = get("");
-        this.model = new DefaultListModel();
-        this.Routenliste.setModel(this.model);
-        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
-            String item = "";
-            item += (i +1) + ". ";
-            item += this.mfz.getFahrten().get(i).getRoute().getStartpunkt();
-            item += " > ";
-            item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
-            this.model.add(i, item);
-        }
+        this.mfz = operationen.get("");
+       
+        this.refreshJList();
+        
         this.RouteNeuStartortFeld.setText("");
         this.RouteNeuZielortFeld.setText("");
         this.RouteNeuAbfahrtFeld.setText("");
@@ -1234,8 +1167,7 @@ public class MitfahrzentraleClient extends JFrame {
      */
     private void RouteEditSaveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_RouteEditSaveButtonActionPerformed
         int index = Integer.valueOf(this.RouteEditQNrFeld.getText());
-        this.RouteEditQNrFeld.setText("");
-        mfz = get("");
+        mfz = operationen.get("");
         Fahrten f = mfz.getFahrten().get(index-1);
         
         Fahrten rt = new Fahrten();
@@ -1251,7 +1183,7 @@ public class MitfahrzentraleClient extends JFrame {
         rt.setRoute(r);
         rt.setFahrer(f.getFahrer());
        
-        this.put(rt, index);
+        this.operationen.put(rt, index);
         
         /*
          * Pr√ºfen ob sich daten ge√§ndert haben 
@@ -1303,21 +1235,13 @@ public class MitfahrzentraleClient extends JFrame {
         } catch (XMPPException ex) {
             Logger.getLogger(MitfahrzentraleClient.class.getName()).log(Level.SEVERE, null, ex);
         }
-        
         /*
          * Update der JList
          */
-        this.mfz = get("");
-        this.model = new DefaultListModel();
-        this.Routenliste.setModel(this.model);
-        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
-            String item = "";
-            item += (i +1) + ". ";
-            item += this.mfz.getFahrten().get(i).getRoute().getStartpunkt();
-            item += " > ";
-            item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
-            this.model.add(i, item);
-        }
+        this.mfz = operationen.get("");
+        
+        this.refreshJList();
+        
         this.RouteEditDialog.dispose();
     }//GEN-LAST:event_RouteEditSaveButtonActionPerformed
 
@@ -1332,7 +1256,7 @@ public class MitfahrzentraleClient extends JFrame {
         p.setName(this.UserCreateNameFeld.getText());
         p.setPassword(this.UserCreatePasswortFeld.getText());
         
-        this.post(p);
+        this.operationen.post(p);
         this.UserCreateNameFeld.setText("");
         this.UserCreateEmailFeld.setText("");
         this.UserCreatePasswortFeld.setText("");
@@ -1356,7 +1280,7 @@ public class MitfahrzentraleClient extends JFrame {
         rt.setEmail(this.UserEditEmailFeld.getText());
         rt.setName(this.UserEditNameFeld.getText());
         rt.setPassword(this.UserEditPasswortFeld.getText());
-        this.put(rt, index);
+        this.operationen.put(rt, index);
         this.UserEditDialog.dispose();
     }//GEN-LAST:event_UserEditSaveButtonActionPerformed
 
@@ -1366,7 +1290,7 @@ public class MitfahrzentraleClient extends JFrame {
      */
     private void UserDeleteSaveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_UserDeleteSaveButtonActionPerformed
         String name = this.UserDeleteUsernameFeld.getText();
-        this.delete(name);
+        this.operationen.delete(name);
         this.UserDeleteDialog.dispose();
     }//GEN-LAST:event_UserDeleteSaveButtonActionPerformed
 
@@ -1384,23 +1308,14 @@ public class MitfahrzentraleClient extends JFrame {
      */
     private void RouteDeleteSaveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_RouteDeleteSaveButtonActionPerformed
         String id = this.RouteDeleteNrFeld.getText();
-        this.delete(Integer.valueOf(id));
+        this.operationen.delete(Integer.valueOf(id));
         
-        this.mfz = get("");
-        this.model = new DefaultListModel();
-        this.Routenliste.setModel(this.model);
-        for(int i = 0; i < this.mfz.getFahrten().size(); i++) {
-            String item = "";
-            item += (i +1) + ". ";
-            item += this.mfz.getFahrten().get(i).getRoute().getStartpunkt();
-            item += " > ";
-            item += this.mfz.getFahrten().get(i).getRoute().getZielpunkt();
-            this.model.add(i, item);
-        }
+        this.mfz = operationen.get("");
+        this.refreshJList();
         try {
             this.pubsub.deleteNode("Route" + id);
         } catch (XMPPException ex) {
-            Logger.getLogger(MitfahrzentraleClient.class.getName()).log(Level.SEVERE, null, ex);
+            System.err.println("Konnte die Node nicht deleten!");
         }
         this.RouteDeleteNrFeld.setText("");
         this.RouteDeleteDialog.dispose();
@@ -1412,7 +1327,7 @@ public class MitfahrzentraleClient extends JFrame {
      */
     private void UserEditQSaveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_UserEditQSaveButtonActionPerformed
         String username = this.UserEditQNameFeld.getText();
-        mfz = get("");
+        mfz = operationen.get("");
         for(Person p : mfz.getUsers().getPerson()) {
             if(p.getName().equals(username)) {
                 this.UserEditEmailFeld.setText(p.getEmail());
@@ -1431,6 +1346,7 @@ public class MitfahrzentraleClient extends JFrame {
     private void RouteEditQSaveButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_RouteEditQSaveButtonActionPerformed
         int routenid = Integer.valueOf(this.RouteEditQNrFeld.getText());
         this.RouteEditQDialog.dispose();
+        this.RouteEditQNrFeld.setText("");
         
         Fahrten f = mfz.getFahrten().get(routenid-1);
         this.RouteEditStartortFeld.setText(f.getRoute().getStartpunkt());
@@ -1441,73 +1357,7 @@ public class MitfahrzentraleClient extends JFrame {
         
         displayDialog(this.RouteEditDialog, 400, 270, "Route bearbeiten");
     }//GEN-LAST:event_RouteEditQSaveButtonActionPerformed
-    
-    /**
-     * Ruft die Daten √ºber GET vom Grizzleyserver ab.
-     * @param url Pfad der Ausgabe auf dem Grizzleyserver
-     * @return Gibt ein Objekt der Mitfahrzentrale, mit den abgerufenen Inhalten, zur√ºck.
-     */
-    private Mitfahrzentrale get(String url) {
-        ClientResponse cr = resource.path(url).accept("application/xml").get(ClientResponse.class);
-        Mitfahrzentrale emfz = cr.getEntity(Mitfahrzentrale.class);
-        return emfz;
-    }
 
-    /**
-     * Erstellt eine Person auf dem Server mit den √ºbergebenen Daten.
-     * @param p Die Person die erstellt wird
-     */
-    private void post(Person p) {
-        resource.path("user/create/").post(p);
-    }
-    
-    /**
-     * Erstellt eine Fahrt auf dem Server mit den √ºbergebenen Daten.
-     * @param f Die Fahrt die erstellt wird
-     */
-    private void post(Fahrten f) {
-        resource.path("fahrten/create").post(ClientResponse.class, f);
-    }
-    /**
-     * Updatet eine Person auf dem Server mit den angegebenen Daten.
-     * @param p Die neuen Personendaten
-     * @param userid Die Personnr
-     */
-    private void put(Person p, int userid) {
-        resource.path("user/edit/" + userid).put(ClientResponse.class, p);
-    }
-    
-    /**
-     * Updatet eine Fahrt auf dem Server mit den angegebenen Daten.
-     * @param f Die neuen Fahrtdaten
-     * @param fahrtenid Die Fahrtnr
-     */
-    private void put(Fahrten f, int fahrtenid) {
-        resource.path("fahrten/edit/" + fahrtenid).put(ClientResponse.class, f);
-    }
-    
-    /**
-     * L√∂scht einen User auf dem Server.
-     * @param name Der Name des Users
-     */
-    private void delete(String name) {
-        Mitfahrzentrale zentrale = get("user/");
-        for(Person p : zentrale.getUsers().getPerson()) {
-            if(p.getName().equals(name)) {
-                int userid = zentrale.getUsers().getPerson().indexOf(p);
-                resource.path("user/delete/" + userid).delete();
-            }
-        }
-    }
-    
-    /**
-     * L√∂scht eine Fahrt auf dem Server.
-     * @param fahrtID Die Nummer der Fahrt
-     */
-    private void delete(int fahrtID) {
-        resource.path("fahrten/delete/" + fahrtID).delete();
-    }
-    
     /**
      * @param args the command line arguments
      */
