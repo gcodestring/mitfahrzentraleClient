@@ -1,9 +1,11 @@
 package de.mfz.client;
+
 import com.sun.jersey.api.client.Client;
 import com.sun.jersey.api.client.ClientResponse;
 import com.sun.jersey.api.client.WebResource;
 import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
+import de.mfz.coordinator.RouteChangedCoordinator;
 import de.mfz.jaxb.*;
 import java.awt.Dimension;
 import java.awt.Toolkit;
@@ -20,11 +22,11 @@ import org.jivesoftware.smack.XMPPException;
 import org.jivesoftware.smackx.pubsub.*;
 /**
  * Die Klasse f√ºr den Client, regelt alle Abfragen und auch die Darstellung.
- * @author Sascha Lemke, Guido Schori, Ren√© Zwinge
+ * @author Sascha Lemke, Guido Schori, Rene Zwinge
  */
 public class MitfahrzentraleClient extends JFrame {
     
-    private final String serverurl = "http://localhost:4434/mitfahrzentrale";
+	private final String serverurl = "http://localhost:4434/mitfahrzentrale";
     private Connection xmppcon;
     private PubSubManager pubsub;
     private LeafNode leafs[];
@@ -32,7 +34,7 @@ public class MitfahrzentraleClient extends JFrame {
     private WebResource resource;
     private Mitfahrzentrale mfz;
     private Person loggedPerson;
-    private DefaultListModel model;
+    private DefaultListModel<String> model;
     
     /**
      * Creates new form MitfahrzentraleClient
@@ -68,10 +70,10 @@ public class MitfahrzentraleClient extends JFrame {
         }
         
         this.setLocationRelativeTo(null);
-        
-        /*
-         * Verbindung zum XMPP Server
-         */
+
+        /**
+         * XMPP Verbindung starten
+         */ 
         this.xmppcon = new XMPPConnection("localhost");
         try {
             this.xmppcon.connect();
@@ -79,15 +81,19 @@ public class MitfahrzentraleClient extends JFrame {
             System.out.println("Konnte nicht zum XMPP Server verbinden.");
         }
 
+        /**
+         * Am XMPP Server anmelden
+         */ 
         try {
             this.xmppcon.login("admin", "admin");
         } catch( IllegalStateException | XMPPException e) {
             System.out.println("Login fehlgeschlagen.");
         }
-        /*
-         * Ruft alle Fahrten ab und erstellt Nodes
-         */
-        pubsub = new PubSubManager(this.xmppcon);
+ 
+        /**
+         * PubSubManager erstellen
+         */ 
+        this.pubsub = new PubSubManager(this.xmppcon);
         
         ConfigureForm form = new ConfigureForm(FormType.submit);
         form.setAccessModel(AccessModel.open);
@@ -96,21 +102,46 @@ public class MitfahrzentraleClient extends JFrame {
         form.setPersistentItems(true);
         form.setPublishModel(PublishModel.open);
         
+        /**
+         * Fahrten Nodes erstellen
+         */ 
         this.leafs = new LeafNode[this.mfz.getFahrten().size()];
         for(int i = 0; i < this.mfz.getFahrten().size(); i++) {            
             try {
                 try {
                     // testen ob node vorhanden und wenn ja, l√∂schen!
-                    Node n = pubsub.getNode("Route" + i);
-                    pubsub.deleteNode("Route" + i);
+                    Node n = this.pubsub.getNode("Route" + i);
+                    this.pubsub.deleteNode("Route" + i);
                 } catch(XMPPException e) {
                     // keine Node vorhanden
                 }
-                this.leafs[i] = (LeafNode) pubsub.createNode("Route" + i, form);
+                this.leafs[i] = (LeafNode) this.pubsub.createNode("Route" + i, form);
             } catch (XMPPException ex) {
                 System.out.println("Konnte keine Node erstellen. √úberpr√ºfen Sie ihre Verbindung!");
             }
         }
+        
+        /**
+         * Erstelle Subscriptions
+         * Node zu dieser geänderten Fahrt abrufen
+         * Listener für diese Node für geänderte Routen in diesem Client starten
+         * User abonniert diesen Node
+         */
+        for (int i = 0; i < this.mfz.getFahrten().size(); i++) { 
+        	try {
+        		LeafNode node = (LeafNode) this.pubsub.getNode("Route" + i);  
+        		for (int a = 0; a < this.mfz.getFahrten().get(i).getMitfahrer().getPerson().size(); a++) { 
+        			if (this.loggedPerson.getEmail()==this.mfz.getFahrten().get(i).getMitfahrer().getPerson().get(a).getEmail()) {
+        				node.addItemEventListener(new RouteChangedCoordinator());
+        				node.subscribe(this.mfz.getFahrten().get(i).getMitfahrer().getPerson().get(a).getEmail());
+        			}
+    			}
+        	} catch (XMPPException e) {
+				e.printStackTrace();
+			}
+        }
+        
+        this.mfz.getFahrten().get(0).getMitfahrer().getPerson().get(0);
     }
 
     /**
@@ -1048,16 +1079,30 @@ public class MitfahrzentraleClient extends JFrame {
      * Meldet den derzeitigen User f√ºr die ausgew√§hlte Fahrt an.
      * @param evt Das Event
      */
+    /* HIER ERGÄNZUNG XMPP SUBSCRIPTION */
     private void anmeldenbuttonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_anmeldenbuttonActionPerformed
         int index = Routenliste.getSelectedIndex();
         if(index != -1) {
             mfz = get("");
             Fahrten f = mfz.getFahrten().get(index);
             Mitfahrer mf = new Mitfahrer();
-            mf.getPerson().add(loggedPerson);
+            mf.getPerson().add(this.loggedPerson);
             f.setMitfahrer(mf);
             index++;
             this.put(f, index);
+            
+            /** 
+             * Node zu dieser geänderten Fahrt abrufen
+             * Listener für diese Node für geänderte Routen in diesem Client starten
+             * User abonniert diesen Node
+             */
+            try {
+            	LeafNode node = (LeafNode) this.pubsub.getNode("Route" + --index);  
+                node.addItemEventListener(new RouteChangedCoordinator());
+				node.subscribe(this.loggedPerson.getEmail());
+			} catch (XMPPException e) {
+				e.printStackTrace();
+			}
             
             mfz = get("");
             index--;
@@ -1478,8 +1523,7 @@ public class MitfahrzentraleClient extends JFrame {
          * http://download.oracle.com/javase/tutorial/uiswing/lookandfeel/plaf.html
          */
         try {
-            javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName());
-                    
+            javax.swing.UIManager.setLookAndFeel("javax.swing.plaf.metal.MetalLookAndFeel");        
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | javax.swing.UnsupportedLookAndFeelException ex) {
             java.util.logging.Logger.getLogger(MitfahrzentraleClient.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }
